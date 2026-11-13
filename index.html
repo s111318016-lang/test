@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>合成遊戲</title>
+<style>
+  body { margin:0; background:#fdf3e0; font-family:sans-serif; display:flex; flex-direction:column;
+         align-items:center; touch-action:none; user-select:none; -webkit-user-select:none; }
+  #hud { width:360px; display:flex; justify-content:space-between; align-items:center; padding:6px 0; font-size:18px; color:#5a3b1e; }
+  #hud .next { display:flex; align-items:center; gap:6px; }
+  #game { width:360px; height:auto; background:#fff8ea; border:3px solid #8b5e3c; border-radius:8px; }
+  #nextCanvas { width:64px; height:64px; background:#fff8ea; border:3px solid #8b5e3c; border-radius:8px; }
+
+  /* ===== 結束 / 過關 頁面 ===== */
+  #overlay { position:fixed; inset:0; background:rgba(0,0,0,.65); display:none; align-items:center;
+             justify-content:center; z-index:10; padding:12px; box-sizing:border-box; }
+  #overlay.show { display:flex; }
+  .panel { background:#fff8ea; border:4px solid #8b5e3c; border-radius:16px; padding:22px; width:min(92vw, 420px);
+           max-height:90vh; overflow:auto; text-align:center; color:#5a3b1e; touch-action:pan-y; box-sizing:border-box; }
+  .panel h1 { margin:0 0 6px; font-size:38px; letter-spacing:2px; }
+  .panel h2 { margin:0 0 12px; font-size:26px; }
+  .panel .score { font-size:20px; margin-bottom:8px; }
+  .btn { display:block; width:100%; margin:10px 0 0; padding:13px; font-size:18px; border:none; border-radius:10px;
+         background:#8b5e3c; color:#fff; cursor:pointer; }
+  .btn.secondary { background:#d9b88f; color:#4a2f14; }
+  .hidden { display:none; }
+  .item { display:flex; gap:12px; align-items:center; text-align:left; padding:10px 0; border-bottom:1px solid #e6d3b3; }
+  .item .thumb { flex:0 0 56px; width:56px; height:56px; border-radius:50%; display:flex; align-items:center;
+                 justify-content:center; color:#fff; font-weight:bold; overflow:hidden; }
+  .item .thumb img { width:100%; height:100%; object-fit:contain; }
+  .item p { margin:2px 0 0; font-size:14px; line-height:1.4; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div>分數：<b id="score">0</b><br>最高：<b id="best">0</b></div>
+  <div class="next">下一個<canvas id="nextCanvas" width="80" height="80"></canvas></div>
+</div>
+<canvas id="game" width="400" height="600"></canvas>
+
+<!-- 結束 / 過關 頁面 -->
+<div id="overlay">
+  <div class="panel">
+    <!-- 主畫面：GAME OVER 或 CONGRATULATIONS -->
+    <div id="viewEnd">
+      <h1 id="endTitle">GAME OVER</h1>
+      <div class="score">分數：<b id="endScore">0</b></div>
+      <button class="btn" id="btnMain">再玩一次</button>
+      <button class="btn secondary" id="btnIntro">查看介紹</button>
+      <button class="btn secondary" id="btnFeedback">旅程回饋</button>
+    </div>
+    <!-- 介紹畫面 -->
+    <div id="viewIntro" class="hidden">
+      <h2>角色介紹</h2>
+      <div id="introList"></div>
+      <button class="btn" id="btnBack">返回</button>
+    </div>
+  </div>
+</div>
+
+<!-- 物理引擎（需要網路連線載入） -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script>
+/* =====================================================
+   ★ 你們最常改的設定都在這一區 ★
+   ===================================================== */
+
+// 元素清單：從最小排到最大（最後一個就是「最後一級」，合成出它就過關）。
+// name = 介紹頁顯示的名稱, desc = 介紹內容（請改成你們自己的文字）
+// r = 半徑（像素）, color = 沒有圖片時用的備用顏色, img = 你們自己畫的圖片路徑
+const FRUITS = [
+  { name: '元素 1',  desc: '請在這裡填寫元素 1 的介紹。', r: 15,  color: '#e63946', img: 'images/1.png'  },
+  { name: '元素 2',  desc: '請在這裡填寫元素 2 的介紹。', r: 20,  color: '#f4845f', img: 'images/2.png'  },
+  { name: '元素 3',  desc: '請在這裡填寫元素 3 的介紹。', r: 26,  color: '#9b5de5', img: 'images/3.png'  },
+  { name: '元素 4',  desc: '請在這裡填寫元素 4 的介紹。', r: 32,  color: '#f9c74f', img: 'images/4.png'  },
+  { name: '元素 5',  desc: '請在這裡填寫元素 5 的介紹。', r: 39,  color: '#f8961e', img: 'images/5.png'  },
+  { name: '元素 6',  desc: '請在這裡填寫元素 6 的介紹。', r: 42,  color: '#ef476f', img: 'images/6.png'  },
+  { name: '元素 7',  desc: '請在這裡填寫元素 7 的介紹。', r: 56,  color: '#e9c46a', img: 'images/7.png'  },
+  { name: '元素 8',  desc: '請在這裡填寫元素 8 的介紹。', r: 66,  color: '#90be6d', img: 'images/8.png'  },
+  { name: '元素 9',  desc: '請在這裡填寫元素 9 的介紹。', r: 77,  color: '#43aa8b', img: 'images/9.png'  },
+  { name: '元素 10', desc: '請在這裡填寫元素 10 的介紹。', r: 89,  color: '#2a9d8f', img: 'images/10.png' },
+  { name: '元素 11', desc: '請在這裡填寫元素 11 的介紹。', r: 102, color: '#2d6a4f', img: 'images/11.png' },
+];
+
+// 「旅程回饋」按鈕要開啟的網址（例如 Google 表單的連結）。留空的話按下去會提示尚未設定。
+const FEEDBACK_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSepr2AiSrwB3pdpEbGoYdP-P26ZuwtteIR-z8lMPXNlar3OMg/viewform?usp=header';
+
+// ===== 遊戲框與元素大小 =====
+const BOX_W = 420;            // 遊戲框寬度。框越小，元素相對越大、越容易堆到紅線
+const BOX_H = 560;            // 遊戲框高度
+const SIZE_SCALE = 1.0;       // 所有元素一起放大／縮小的倍率（1.3 = 全部放大 30%）
+const TEST_MODE = location.search.includes('test');   // 網址最後加上 ?test 就是測試模式（會掉大顆的，方便測試過關）
+
+const MAX_DROP_LEVEL = TEST_MODE ? FRUITS.length - 2 : 3;     // 一開始會掉落的最大等級（0 = 最小的那種）
+const GRAVITY = 1;            // 重力：越大掉越快
+const BOUNCE = 0.5;           // 彈性：0 不彈，1 很彈
+const FRICTION = 0.3;         // 摩擦力
+const DROP_COOLDOWN = 600;    // 兩次投放之間的等待時間（毫秒）
+const IMG_SCALE = 2.0;        // 圖片寬度 = 直徑 × 這個數字（1.0 剛好貼合；圖片四周有留白時可調大，例如 1.2）
+const DEADLINE_Y = BOX_H * 0.2;   // 紅線高度（0.5 = 框的正中間；0.2 = 靠近頂部）。水果堆過這條線就會輸
+const OVER_DELAY = 1500;      // 超過紅線多久後判定輸（毫秒）
+const WIN_DELAY = 600;        // 合成出最後一級後，等多久才跳出 CONGRATULATIONS（毫秒）
+
+/* ===================================================== */
+
+const { Engine, World, Bodies, Body, Events } = Matter;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const mainCtx = ctx;
+const nctx = document.getElementById('nextCanvas').getContext('2d');
+canvas.width = BOX_W;
+canvas.height = BOX_H;
+const W = BOX_W, H = BOX_H;
+
+const engine = Engine.create();
+engine.gravity.y = GRAVITY;
+
+// 牆壁與地板
+const T = 60;
+World.add(engine.world, [
+  Bodies.rectangle(W / 2, H + T / 2, W + 2 * T, T, { isStatic: true }),
+  Bodies.rectangle(-T / 2, H / 2, T, H * 3, { isStatic: true }),
+  Bodies.rectangle(W + T / 2, H / 2, T, H * 3, { isStatic: true }),
+]);
+
+// 載入圖片（載入失敗會自動改用顏色圓球）
+FRUITS.forEach(f => {
+  f.r = f.r * SIZE_SCALE;
+  f.image = new Image();
+  f.image.onload = () => { f.loaded = true; };
+  f.image.src = f.img;
+});
+
+let score = 0, best = 0, gameOver = false;
+let paused = false;   // 跳出頁面時暫停遊戲
+let won = false;      // 這一局是否已經過關過
+let endMode = null;   // 'over' 或 'win'
+try { best = Number(localStorage.getItem('best') || 0); } catch (e) {}
+document.getElementById('best').textContent = best;
+
+let currentLevel = randLevel();   // 手上這顆（即將投放）
+let nextLevel = randLevel();      // 下一顆（顯示在右上角）
+let pointerX = W / 2;
+let canDrop = true;
+let overSince = null;
+
+function randLevel() { return Math.floor(Math.random() * (MAX_DROP_LEVEL + 1)); }
+
+// 投放時的高度：大顆的會自動往下一點，避免超出框外
+function dropY(r) { return Math.max(40, r + 6); }
+
+function makeFruit(level, x, y) {
+  const f = FRUITS[level];
+  const body = Bodies.circle(x, y, f.r, { restitution: BOUNCE, friction: FRICTION });
+  body.level = level;
+  body.bornAt = performance.now();
+  World.add(engine.world, body);
+  return body;
+}
+
+function addScore(n) {
+  score += n;
+  document.getElementById('score').textContent = score;
+  if (score > best) {
+    best = score;
+    document.getElementById('best').textContent = best;
+    try { localStorage.setItem('best', best); } catch (e) {}
+  }
+}
+
+// 合併：兩顆同等級的水果碰到，就變成下一級
+Events.on(engine, 'collisionStart', ev => {
+  for (const p of ev.pairs) {
+    const a = p.bodyA, b = p.bodyB;
+    if (a.isStatic || b.isStatic) continue;
+    if (a.dead || b.dead) continue;
+    if (a.level !== b.level) continue;
+    if (a.level >= FRUITS.length - 1) continue;   // 最大的不再合併
+    a.dead = b.dead = true;
+    const x = (a.position.x + b.position.x) / 2;
+    const y = (a.position.y + b.position.y) / 2;
+    World.remove(engine.world, [a, b]);
+    makeFruit(a.level + 1, x, y);
+    addScore((a.level + 1) * 2);
+
+    // 合成出最後一級 → 過關
+    if (a.level + 1 === FRUITS.length - 1 && !won) {
+      won = true;
+      setTimeout(() => { if (!gameOver) showOverlay('win'); }, WIN_DELAY);
+    }
+  }
+});
+
+// ===== 結束 / 過關 頁面 =====
+const overlay = document.getElementById('overlay');
+const viewEnd = document.getElementById('viewEnd');
+const viewIntro = document.getElementById('viewIntro');
+
+function showOverlay(mode) {
+  endMode = mode;
+  paused = true;
+  document.getElementById('endTitle').textContent = mode === 'win' ? 'CONGRATULATIONS' : 'GAME OVER';
+  document.getElementById('endScore').textContent = score;
+  document.getElementById('btnMain').textContent = mode === 'win' ? '繼續遊玩' : '再玩一次';
+  viewEnd.classList.remove('hidden');
+  viewIntro.classList.add('hidden');
+  overlay.classList.add('show');
+}
+
+function hideOverlay() {
+  overlay.classList.remove('show');
+  paused = false;
+  overSince = null;
+}
+
+document.getElementById('btnMain').addEventListener('click', () => {
+  if (endMode === 'over') { hideOverlay(); restart(); }
+  else { hideOverlay(); }
+});
+
+document.getElementById('btnIntro').addEventListener('click', () => {
+  viewEnd.classList.add('hidden');
+  viewIntro.classList.remove('hidden');
+  viewIntro.parentElement.scrollTop = 0;
+});
+
+document.getElementById('btnBack').addEventListener('click', () => {
+  viewIntro.classList.add('hidden');
+  viewEnd.classList.remove('hidden');
+});
+
+document.getElementById('btnFeedback').addEventListener('click', () => {
+  if (!FEEDBACK_URL) { alert('回饋表單的連結還沒設定。'); return; }
+  window.open(FEEDBACK_URL, '_blank');
+});
+
+// 建立介紹頁的內容
+(function buildIntro() {
+  const list = document.getElementById('introList');
+  FRUITS.forEach((f, i) => {
+    const item = document.createElement('div');
+    item.className = 'item';
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+    thumb.style.background = f.color;
+    thumb.textContent = i + 1;
+    const img = new Image();
+    img.onload = () => { thumb.textContent = ''; thumb.style.background = 'none'; thumb.appendChild(img); };
+    img.src = f.img;
+    const text = document.createElement('div');
+    const title = document.createElement('b');
+    title.textContent = f.name;
+    const desc = document.createElement('p');
+    desc.textContent = f.desc;
+    text.appendChild(title);
+    text.appendChild(desc);
+    item.appendChild(thumb);
+    item.appendChild(text);
+    list.appendChild(item);
+  });
+})();
+
+// ===== 操作：滑鼠 / 手指移動，放開（或點一下）投放 =====
+function setPointer(e) {
+  const rect = canvas.getBoundingClientRect();
+  pointerX = (e.clientX - rect.left) * W / rect.width;
+}
+canvas.addEventListener('pointermove', setPointer);
+canvas.addEventListener('pointerdown', setPointer);
+canvas.addEventListener('pointerup', e => {
+  setPointer(e);
+  if (gameOver || paused || !canDrop) return;
+  const r = FRUITS[currentLevel].r;
+  const x = Math.max(r, Math.min(W - r, pointerX));
+  makeFruit(currentLevel, x, dropY(r));
+  currentLevel = nextLevel;
+  nextLevel = randLevel();
+  canDrop = false;
+  setTimeout(() => { canDrop = true; }, DROP_COOLDOWN);
+});
+
+function restart() {
+  engine.world.bodies.filter(b => !b.isStatic).forEach(b => World.remove(engine.world, b));
+  score = 0;
+  document.getElementById('score').textContent = 0;
+  gameOver = false;
+  won = false;
+  overSince = null;
+  currentLevel = randLevel();
+  nextLevel = randLevel();
+}
+
+function checkGameOver() {
+  const now = performance.now();
+  const over = engine.world.bodies.some(b =>
+    !b.isStatic && now - b.bornAt > 1000 && b.position.y - FRUITS[b.level].r < DEADLINE_Y);
+  if (over) {
+    if (overSince === null) overSince = now;
+    if (now - overSince > OVER_DELAY) {
+      gameOver = true;
+      showOverlay('over');
+    }
+  } else {
+    overSince = null;
+  }
+}
+
+function drawFruit(level, x, y, angle, alpha, target) {
+  const ctx = target || mainCtx;
+  const f = FRUITS[level];
+  ctx.save();
+  ctx.globalAlpha = alpha || 1;
+  ctx.translate(x, y);
+  ctx.rotate(angle || 0);
+  if (f.loaded && f.image.naturalWidth > 0) {
+    const s = f.r * IMG_SCALE;
+    ctx.drawImage(f.image, -s, -s, s * 2, s * 2);
+  } else {
+    ctx.beginPath();
+    ctx.arc(0, 0, f.r, 0, Math.PI * 2);
+    ctx.fillStyle = f.color;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.stroke();
+    // 小記號讓你看得出旋轉
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath(); ctx.arc(f.r * 0.45, 0, f.r * 0.15, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.font = 'bold ' + Math.max(12, f.r * 0.6) + 'px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(level + 1, 0, 0);
+  }
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // 紅線
+  ctx.strokeStyle = 'rgba(220,40,40,0.6)';
+  ctx.setLineDash([8, 6]);
+  ctx.beginPath(); ctx.moveTo(0, DEADLINE_Y); ctx.lineTo(W, DEADLINE_Y); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 場上的水果
+  engine.world.bodies.forEach(b => {
+    if (!b.isStatic) drawFruit(b.level, b.position.x, b.position.y, b.angle);
+  });
+
+  // 準備投放的水果與導引線
+  if (!gameOver) {
+    const r = FRUITS[currentLevel].r;
+    const x = Math.max(r, Math.min(W - r, pointerX));
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.beginPath(); ctx.moveTo(x, dropY(r)); ctx.lineTo(x, H); ctx.stroke();
+    if (canDrop) drawFruit(currentLevel, x, dropY(r), 0, 0.9);
+  }
+}
+
+// 右上角的「下一個」預覽
+function drawNext() {
+  nctx.clearRect(0, 0, 80, 80);
+  const s = Math.min(1, 34 / FRUITS[nextLevel].r);   // 太大的會自動縮小以放進框內
+  nctx.save();
+  nctx.scale(s, s);
+  drawFruit(nextLevel, 40 / s, 40 / s, 0, 1, nctx);
+  nctx.restore();
+}
+
+// 依照目前的螢幕大小，自動縮放遊戲框（電腦、手機都適用，長寬比不變）
+function fitToScreen() {
+  const hud = document.getElementById('hud');
+  const availH = window.innerHeight - hud.offsetHeight - 30;
+  const availW = window.innerWidth * 0.96 - 6;
+  const w = Math.max(120, Math.min(availW, availH * BOX_W / BOX_H));
+  canvas.style.width = w + 'px';
+  hud.style.width = (w + 6) + 'px';
+}
+window.addEventListener('resize', fitToScreen);
+window.addEventListener('load', fitToScreen);
+fitToScreen();
+
+function loop() {
+  if (!gameOver && !paused) {
+    Engine.update(engine, 1000 / 60);
+    checkGameOver();
+  }
+  draw();
+  drawNext();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
